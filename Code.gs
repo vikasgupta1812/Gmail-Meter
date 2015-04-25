@@ -1,142 +1,249 @@
-function init_(sDate, eDate) {
-    var dayOfEmailsSent = [];
-    var dayOfEmailsReceived = [];
-    var timeOfEmailsSent = [];
-    var timeOfEmailsReceived = [];
-    for (i = 0; i < 24; i++) {
-        timeOfEmailsSent[i] = 0;
-        timeOfEmailsReceived[i] = 0;
-    }
-    var dayOfWeek = [];
-    for (i = 0; i < 14; i++) {
-        dayOfWeek[i] = 0;
-    }
-    var nbrOfEmailsPerConversation = [];
-    for (i = 0; i < 101; i++) {
-        nbrOfEmailsPerConversation[i] = 0;
-    }
-    var timeBeforeFirstResponse = [];
-    for (i = 0; i < 12; i++) {
-        timeBeforeFirstResponse[i] = 0;
-    }
-    var messagesLength = [];
-    for (i = 0; i < 12; i++) {
-        messagesLength[i] = 0;
-    }
-    var topThreads = [];
-    for (i = 0; i < 10; i++) {
-        topThreads.push(['', 0]);
-    }
+var BATCH_SIZE = 50;
+var ss = SpreadsheetApp.getActiveSpreadsheet();
+// If you are using several email addresses, list them in the following variable 
+// - eg 'romain.vialard@gmail.com,romain.vialard@example.com'
+var aliases =  'romain.vialard@euromed-management.com';
 
-    var userTimeZone = CalendarApp.getDefaultCalendar().getTimeZone();
-    var user = Session.getEffectiveUser().getEmail();
-    var variables = {
-        range: 0,
-        nbrOfConversations: 0,
-        nbrOfEmailsPerConversation: nbrOfEmailsPerConversation,
-        nbrOfConversationsYouveRepliedTo: 0,
-        nbrOfConversationsStartedByYou: 0,
-        nbrOfConversationsStarred: 0,
-        nbrOfConversationsMarkedAsImportant: 0,
-        nbrOfConversationsInInbox: 0,
-        nbrOfConversationsInLabels: 0,
-        nbrOfConversationsArchived: 0,
-        nbrOfConversationsInTrash: 0,
-        nbrOfEmailsReceived: 0,
-        nbrOfEmailsSent: 0,
-        sentDirectlyToYou: 0,
-        companyname: user.match(/@([^.]+)/)[1],
-        sharedInternally: 0,
-        nbrOfAttachmentsReceived: 0,
-        nbrOfAttachmentsSent: 0,
-        attachmentsSharedInternally: 0,
-        attachmentsSent: {
-          images:0,
-          videos:0,
-          audios:0,
-          texts:0
-        },
-        attachmentsReceived: {
-          images:0,
-          videos:0,
-          audios:0,
-          texts:0
-        },
-        timeOfEmailsSent: timeOfEmailsSent,
-        timeOfEmailsReceived: timeOfEmailsReceived,
-        dayOfWeek: dayOfWeek,
-        timeBeforeFirstResponse: timeBeforeFirstResponse,
-        messagesLength: messagesLength,
-        topThreads: topThreads,
-        userTimeZone: userTimeZone,
-        user: user
-    };
-    if (sDate != undefined) {
-        variables['type'] = 'custom';
-        variables['startDate'] = sDate;
-        variables['endDate'] = eDate;
-        for (i = 0; i < 31; i++) {
-            dayOfEmailsSent[i] = 0;
-            dayOfEmailsReceived[i] = 0;
+function activityReport() {
+    var status = ScriptProperties.getProperty("status");
+    // If the script is triggered for the first time, init
+    if (status == null) init_();
+    else {
+        status = Utilities.jsonParse(status);
+        var previousMonth = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).getMonth();
+        if (status == null || (status.customReport == false && status.previousMonth != previousMonth)) {
+            init_();
+            fetchEmails_(status.customReport);
         }
-        var monthOfEmailsSent = [];
-        var monthOfEmailsReceived = [];
-        for (i = 0; i < 12; i++) {
-            monthOfEmailsSent[i] = 0;
-            monthOfEmailsReceived[i] = 0;
-        }
-        variables['monthOfEmailsSent'] = monthOfEmailsSent;
-        variables['monthOfEmailsReceived'] = monthOfEmailsReceived;
-        var status = {
-            customReport: true,
-            reportSent: "no"
-        };
+        // If report not sent, continue to work on the report
+        else if (status.reportSent == "no") fetchEmails_(status.customReport);
+    }
+}
+
+function fetchEmails_(customReport) {
+    var variables = Utilities.jsonParse(ScriptProperties.getProperty("variables"));
+    if (!customReport) {
+        var query = "after:" + variables.year + "/" + (variables.previousMonth + 1) + "/1";
+        query += " before:" + variables.year + "/" + (variables.previousMonth + 1) + "/31";
     }
     else {
-        // Find previous month...
-        variables['previous'] = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 2);
-        variables['previousMonth'] = variables['previous'].getMonth();
-        variables['year'] = variables['previous'].getYear();
-        variables['lastDay'] = daysInMonth_(variables['previousMonth'], variables['year']);
-        for (i = 0; i < variables['lastDay']; i++) {
-            dayOfEmailsSent[i] = 0;
-            dayOfEmailsReceived[i] = 0;
-        }
-        var status = {
-            customReport: false,
-            previousMonth: variables['previousMonth'],
-            reportSent: "no"
-        };
+        var previousMonth = new Date(new Date().setMonth(new Date().getMonth() - 1));
+        var query = "after:" + Utilities.formatDate(previousMonth, variables.userTimeZone, 'yyyy') + "/" + Utilities.formatDate(previousMonth, variables.userTimeZone, 'MM') + "/1";
+        query += " before:" + Utilities.formatDate(new Date(), variables.userTimeZone, 'yyyy') + "/" + Utilities.formatDate(new Date(), variables.userTimeZone, 'MM') + "/1";
     }
-    variables['dayOfEmailsSent'] = dayOfEmailsSent;
-    variables['dayOfEmailsReceived'] = dayOfEmailsReceived;
-    ScriptProperties.setProperty("variables", Utilities.jsonStringify(variables));
-    Utilities.sleep(500);
-    ScriptProperties.setProperty("status", Utilities.jsonStringify(status));
+    query += " in:anywhere -label:sms -label:call-log -label:chats -label:spam -filename:ics";
+    query += " -from:maestro.bounces.google.com -from:unified-notifications.bounces.google.com -from:docs.google.com";
+    query += " -from:group.calendar.google.com -from:apps-scripts-notifications@google.com";
+    query += " -from:sites.bounces.google.com -from:noreply -from:notify -from:notification";
+    var startDate = new Date(variables.startDate).getTime();
+    var endDate = new Date(variables.endDate).getTime();
+    var conversations = GmailApp.search(query, variables.range, BATCH_SIZE);
+    variables.nbrOfConversations += conversations.length;
     var sheets = ss.getSheets();
-    sheets[0].clear();
-    var lastColumn = sheets[0].getMaxColumns();
-    if(lastColumn > 3){
-      sheets[0].deleteColumns(3, lastColumn-3);
+    var people = sheets[0].getDataRange().getValues();
+    var record = [];
+    for (var i = 0; i < conversations.length; i++) {
+        var conversationId = conversations[i].getId();
+        var firstMessageSubject = conversations[i].getFirstMessageSubject();
+        var starred = false;
+        if (conversations[i].hasStarredMessages()) {
+            variables.nbrOfConversationsStarred++;
+            starred = true;
+        }
+        var important = false;
+        if (conversations[i].isImportant()) {
+            variables.nbrOfConversationsMarkedAsImportant++;
+            important = true;
+        }
+        var location = "";
+        var labels = conversations[i].getLabels();
+        var nbrOfLabels = labels.length;
+        if (nbrOfLabels == 0) {
+            if (conversations[i].isInInbox()) {
+                variables.nbrOfConversationsInInbox++;
+                location += "Inbox,";
+            }
+            else if (conversations[i].isInTrash()) {
+                variables.nbrOfConversationsInTrash++;
+                location += "Trashed,";
+            }
+            else {
+                variables.nbrOfConversationsArchived++;
+                location = "Archived";
+            }
+        }
+        else {
+            variables.nbrOfConversationsInLabels++;
+            for (var j = 0; j < nbrOfLabels; j++) {
+                location += labels[j].getName() + ",";
+            }
+        }
+        var youReplied = false;
+        var youStartedTheConversation = false;
+        var someoneAnswered = false;
+        var messages = conversations[i].getMessages();
+        var nbrOfMessages = messages.length;
+        variables.nbrOfEmailsPerConversation[nbrOfMessages]++;
+        for (var j = 0; j < 10; j++) {
+            if (variables.topThreads[j][1] < nbrOfMessages) {
+                variables.topThreads.splice(j, 0, [firstMessageSubject, nbrOfMessages]);
+                variables.topThreads.pop();
+                j = 10;
+            }
+        }
+        var timeOfFirstMessage = 0;
+        var waitingTime = 0;
+        for (var j = 0; j < nbrOfMessages; j++) {
+            var process = true;
+            var date = messages[j].getDate();
+            var month = date.getMonth();
+            if (customReport) {
+                if (date.getTime() < startDate || date.getTime() > endDate) process = false;
+            }
+            else {
+                if (month != variables.previousMonth) process = false;
+            }
+            if (process) {
+                Utilities.sleep(1000);
+                //////////////////////////////////
+                // Fetch sender of each emails
+                //////////////////////////////////
+                var from = messages[j].getFrom().replace(/"[^"]*"/g,'');
+                if (from.match(/</) != null) from = from.match(/<([^>]*)/)[1];
+                var time = Utilities.formatDate(date, variables.userTimeZone, "H");
+                var day = Utilities.formatDate(date, variables.userTimeZone, "d") - 1;
+
+                // Use function from Utilities file
+                variables = countSendsPerDaysOfWeek_(variables, date, from);
+                var body = messages[j].getBody();
+                // Words count - Use function from Utilities file
+                var resultsFromCalcMessagesLength = calcMessagesLength_(variables, body, from);
+                variables = resultsFromCalcMessagesLength[0];
+                var messageLength = resultsFromCalcMessagesLength[1];
+                var cc = messages[j].getCc().replace(/"[^"]*"/g,'').split(/,/);
+                for (var k = 0; k < cc.length; k++) {
+                    if (cc[k].match(/</) != null) cc[k] = cc[k].match(/<([^>]*)/)[1];
+                }
+                var reg = new RegExp(from, 'i');
+                // You have sent this msg
+                if ((variables.user + aliases).search(reg) != -1) {
+                    if (j == 0) {
+                        youStartedTheConversation = true;
+                        timeOfFirstMessage = date.getTime();
+                    }
+                    if (j > 0 && !youStartedTheConversation) {
+                        if (!youReplied) {
+                            youReplied = true;
+                            // Use function from Utilities file
+                            variables = calcWaitingTime_(variables, date, timeOfFirstMessage, youStartedTheConversation);
+                        }
+                    }
+                    variables.nbrOfEmailsSent++;
+                    variables.timeOfEmailsSent[time]++;
+                    variables.dayOfEmailsSent[day]++;
+                    if (customReport) variables.monthOfEmailsSent[month]++;
+                    var sharedWithTheOutsideWorld = false;
+                    var to = messages[j].getTo().replace(/"[^"]*"/g,'').split(/,/);
+                    for (var k = 0; k < to.length; k++) {
+                        if (to[k].match(/</) != null) to[k] = to[k].match(/<([^>]*)/)[1];
+                        if (to[k].search(variables.companyname) == -1) sharedWithTheOutsideWorld = true;
+                        var found = false;
+                        for (var l = 0; l < people.length; l++) {
+                            if (to[k] == people[l][0]) {
+                                people[l][2]++;
+                                found = true;
+                            }
+                        }
+                        if (!found) people.push([to[k], 0, 1]);
+                    }
+                    if(!sharedWithTheOutsideWorld) variables.sharedInternally++;
+                    // count Attachments
+                    var attachments = messages[j].getAttachments();
+                    for(k in attachments){
+                      variables.nbrOfAttachmentsSent++;
+                      if(!sharedWithTheOutsideWorld) variables.attachmentsSharedInternally++;
+                      var name = attachments[k].getName();
+                      var extension = name.substr(name.lastIndexOf('.')+1);
+                      var contentType = attachments[k].getContentType();
+                      if(contentType.indexOf('image') != -1) variables.attachmentsSent.images++;
+                      else if(contentType.indexOf('text') != -1) variables.attachmentsSent.texts++;
+                      else if(contentType.indexOf('video') != -1) variables.attachmentsSent.videos++;
+                      else if(contentType.indexOf('audio') != -1) variables.attachmentsSent.audios++;
+                      else if(variables.attachmentsSent[extension] != null) variables.attachmentsSent[extension]++;
+                      else {
+                        variables.attachmentsSent[extension] = 1;
+                        if(variables.attachmentsReceived[extension] == null) variables.attachmentsReceived[extension] = 0;
+                      }
+                    }
+                }
+                // You have received this msg
+                else {
+                    if (j == 0) timeOfFirstMessage = date.getTime();
+                    else if (youStartedTheConversation && !someoneAnswered) {
+                        someoneAnswered = true;
+                        // Use function from Utilities file
+                        variables = calcWaitingTime_(variables, date, timeOfFirstMessage, youStartedTheConversation);
+                    }
+                    var found = false;
+                    for (var k = 0; k < people.length; k++) {
+                        if (from == people[k][0]) {
+                            people[k][1]++;
+                            found = true;
+                        }
+                    }
+                    if (!found) people.push([from, 1, 0]);
+                    var to = messages[j].getTo().replace(/"[^"]*"/g,'');
+                    var checkSendToYou = false;
+                    var aliasesTemp = new Array(variables.user).concat(aliases.split(','));
+                    for(var k = 0; k < aliasesTemp.length; k++){
+                        if(aliasesTemp[k] != ''){
+                            var reg = new RegExp(aliasesTemp[k], 'i');
+                            if (to.search(reg) != -1) checkSendToYou = true;
+                        }
+                    }
+                    if(checkSendToYou)variables.sentDirectlyToYou++;
+                    var sharedWithTheOutsideWorld = false;
+                    to = to.split(/,/);
+                    for (var k = 0; k < to.length; k++) {
+                        if (to[k].match(/</) != null) to[k] = to[k].match(/<([^>]*)/)[1];
+                        if (to[k].search(variables.companyname) == -1) sharedWithTheOutsideWorld = true;
+                    }
+                    if(sharedWithTheOutsideWorld == false && from.search(variables.companyname) != -1) variables.sharedInternally++;
+                    variables.nbrOfEmailsReceived++;
+                    variables.timeOfEmailsReceived[time]++;
+                    variables.dayOfEmailsReceived[day]++;
+                    if (customReport) variables.monthOfEmailsReceived[month]++;
+                    // count Attachments
+                    var attachments = messages[j].getAttachments();
+                    for(k in attachments){
+                      variables.nbrOfAttachmentsReceived++;
+                      if(sharedWithTheOutsideWorld == false && from.search(variables.companyname) != -1) variables.attachmentsSharedInternally++;
+                      var name = attachments[k].getName();
+                      var extension = name.substr(name.lastIndexOf('.')+1);
+                      var contentType = attachments[k].getContentType();
+                      if(contentType.indexOf('image') != -1) variables.attachmentsReceived['images']++;
+                      else if(contentType.indexOf('text') != -1) variables.attachmentsReceived.texts++;
+                      else if(contentType.indexOf('video') != -1) variables.attachmentsReceived.videos++;
+                      else if(contentType.indexOf('audio') != -1) variables.attachmentsReceived.audios++;
+                      else if(variables.attachmentsReceived[extension] != null) variables.attachmentsReceived[extension]++;
+                      else {
+                        variables.attachmentsReceived[extension] = 1;
+                        if(variables.attachmentsSent[extension] == null) variables.attachmentsSent[extension] = 0;
+                      }
+                    }
+                }
+                if (to != null) to = to.toString();
+                if (cc != null) cc = cc.toString();
+                var dayOfWeek = Utilities.formatDate(date, variables.userTimeZone, "EEEE");
+                record.push([date, dayOfWeek, firstMessageSubject, from, to, cc, messageLength, location]);
+            }
+        }
+        if (youStartedTheConversation) variables.nbrOfConversationsStartedByYou++;
+        if (youReplied) variables.nbrOfConversationsYouveRepliedTo++;
     }
-    sheets[0].getRange("A1:C1").setValues([
-        ["People", "Number of emails received by them", "Number of emails sent to them"]
-    ]);
-    if (sheets[1] == undefined) {
-        ss.insertSheet();
-    }
-    SpreadsheetApp.flush();
-    sheets = ss.getSheets();
-    lastColumn = sheets[1].getMaxColumns();
-    if(lastColumn > 8){
-      sheets[1].deleteColumns(8, lastColumn-8);
-    }
-    sheets[1].clear().getRange("A1:H1").setValues([["Date", "Day of week", "Thread Id", "From", "To", "Cc", "Words count", "Location"]]);
-    sheets[1].getRange("A2:A").setNumberFormat("MMM YY");
-    SpreadsheetApp.flush();
-    var currentTriggers = ScriptApp.getScriptTriggers();
-    for(i in currentTriggers){
-      ScriptApp.deleteTrigger(currentTriggers[i]);
-    }
-    ScriptApp.newTrigger('activityReport').timeBased().everyMinutes(5).create();
+    variables.range += BATCH_SIZE;
+    ScriptProperties.setProperty("variables", Utilities.jsonStringify(variables));
+    sheets[0].getRange(1, 1, people.length, 3).setValues(people);
+    if (record[0] != undefined && sheets[1].getMaxRows() < 38000) sheets[1].getRange(sheets[1].getLastRow() + 1, 1, record.length, record[0].length).setValues(record);
+    if (conversations.length < BATCH_SIZE) sendReport_(variables);
 }
