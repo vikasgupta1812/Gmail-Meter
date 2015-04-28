@@ -37,26 +37,33 @@ function fetchEmails_(customReport) {
     query += " -from:sites.bounces.google.com -from:noreply -from:notify -from:notification";
     var startDate = new Date(variables.startDate).getTime();
     var endDate = new Date(variables.endDate).getTime();
-    var conversations = GmailApp.search(query, variables.range, BATCH_SIZE);
-    variables.nbrOfConversations += conversations.length;
-    var sheets = ss.getSheets();
-    var people = sheets[0].getDataRange().getValues();
+    // VG: Search Gmail with filter Criteria. Result is in forms of conversations (grouped messages)
+	var conversations = GmailApp.search(query, variables.range, BATCH_SIZE);
+    // VG: Get conversations length.
+	variables.nbrOfConversations += conversations.length;
+    // Get all the sheets
+	var sheets = ss.getSheets();
+    // People variable to store number of senders in first sheet.
+	var people = sheets[0].getDataRange().getValues();
     var record = [];
     for (var i = 0; i < conversations.length; i++) {
         var conversationId = conversations[i].getId();
         var firstMessageSubject = conversations[i].getFirstMessageSubject();
+		//VG: Check if the conversation is starred
         var starred = false;
         if (conversations[i].hasStarredMessages()) {
             variables.nbrOfConversationsStarred++;
             starred = true;
         }
+		// VG: Identify if the conversation is marked as important.
         var important = false;
         if (conversations[i].isImportant()) {
             variables.nbrOfConversationsMarkedAsImportant++;
             important = true;
         }
         var location = "";
-        var labels = conversations[i].getLabels();
+        // Get labels
+		var labels = conversations[i].getLabels();
         var nbrOfLabels = labels.length;
         if (nbrOfLabels == 0) {
             if (conversations[i].isInInbox()) {
@@ -78,12 +85,16 @@ function fetchEmails_(customReport) {
                 location += labels[j].getName() + ",";
             }
         }
+		//VG: Other important variables
         var youReplied = false;
         var youStartedTheConversation = false;
         var someoneAnswered = false;
-        var messages = conversations[i].getMessages();
+		//VG: Drill down the conversation. Get the messages in conversations.
+        var messages = conversations[i].getMessages();		
         var nbrOfMessages = messages.length;
+		// VG: ??
         variables.nbrOfEmailsPerConversation[nbrOfMessages]++;
+		// VG: Maintain the top threads table.
         for (var j = 0; j < 10; j++) {
             if (variables.topThreads[j][1] < nbrOfMessages) {
                 variables.topThreads.splice(j, 0, [firstMessageSubject, nbrOfMessages]);
@@ -91,39 +102,45 @@ function fetchEmails_(customReport) {
                 j = 10;
             }
         }
-        var timeOfFirstMessage = 0;
+        
+		var timeOfFirstMessage = 0;
         var waitingTime = 0;
+		// VG: Going through all the messages in the conversation.
         for (var j = 0; j < nbrOfMessages; j++) {
             var process = true;
             var date = messages[j].getDate();
             var month = date.getMonth();
+			//VG: if the message falls outside the date range (Custom report) or last month(Regular monthly report) do not process the message
             if (customReport) {
                 if (date.getTime() < startDate || date.getTime() > endDate) process = false;
             }
             else {
                 if (month != variables.previousMonth) process = false;
             }
+			//VG: Process the message
             if (process) {
                 Utilities.sleep(1000);
-                //////////////////////////////////
                 // Fetch sender of each emails
-                //////////////////////////////////
                 var from = messages[j].getFrom().replace(/"[^"]*"/g,'');
                 if (from.match(/</) != null) from = from.match(/<([^>]*)/)[1];
+				// VG: convert the date and time of the message to userTimeZone
                 var time = Utilities.formatDate(date, variables.userTimeZone, "H");
                 var day = Utilities.formatDate(date, variables.userTimeZone, "d") - 1;
 
                 // Use function from Utilities file
+				//VG: get day of week stored in variables 
                 variables = countSendsPerDaysOfWeek_(variables, date, from);
                 var body = messages[j].getBody();
                 // Words count - Use function from Utilities file
                 var resultsFromCalcMessagesLength = calcMessagesLength_(variables, body, from);
                 variables = resultsFromCalcMessagesLength[0];
                 var messageLength = resultsFromCalcMessagesLength[1];
+				//Get cc and store in cc array
                 var cc = messages[j].getCc().replace(/"[^"]*"/g,'').split(/,/);
                 for (var k = 0; k < cc.length; k++) {
                     if (cc[k].match(/</) != null) cc[k] = cc[k].match(/<([^>]*)/)[1];
                 }
+				// VG: ??
                 var reg = new RegExp(from, 'i');
                 // You have sent this msg
                 if ((variables.user + aliases).search(reg) != -1) {
@@ -247,7 +264,7 @@ function fetchEmails_(customReport) {
 	ScriptProperties.setProperty("variables", Utilities.jsonStringify(variables));
     // VG: Set the values in first sheet to the people variable for the next run.
 	sheets[0].getRange(1, 1, people.length, 3).setValues(people);
-    
+    // VG: ???
 	if (record[0] != undefined && sheets[1].getMaxRows() < 38000) sheets[1].getRange(sheets[1].getLastRow() + 1, 1, record.length, record[0].length).setValues(record);
     // VG: Generate report.
 	if (conversations.length < BATCH_SIZE) sendReport_(variables);
