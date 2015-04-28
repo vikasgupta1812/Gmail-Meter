@@ -241,9 +241,14 @@ function fetchEmails_(customReport) {
         if (youStartedTheConversation) variables.nbrOfConversationsStartedByYou++;
         if (youReplied) variables.nbrOfConversationsYouveRepliedTo++;
     }
-    variables.range += BATCH_SIZE;
-    ScriptProperties.setProperty("variables", Utilities.jsonStringify(variables));
-    sheets[0].getRange(1, 1, people.length, 3).setValues(people);
-    if (record[0] != undefined && sheets[1].getMaxRows() < 38000) sheets[1].getRange(sheets[1].getLastRow() + 1, 1, record.length, record[0].length).setValues(record);
-    if (conversations.length < BATCH_SIZE) sendReport_(variables);
+    // VG: Increment the search for next block.
+	variables.range += BATCH_SIZE;
+    // VG: Set the starting point for next run.
+	ScriptProperties.setProperty("variables", Utilities.jsonStringify(variables));
+    // VG: Set the values in first sheet to the people variable for the next run.
+	sheets[0].getRange(1, 1, people.length, 3).setValues(people);
+    
+	if (record[0] != undefined && sheets[1].getMaxRows() < 38000) sheets[1].getRange(sheets[1].getLastRow() + 1, 1, record.length, record[0].length).setValues(record);
+    // VG: Generate report.
+	if (conversations.length < BATCH_SIZE) sendReport_(variables);
 }
